@@ -49,6 +49,13 @@ import {
 import { setAdminRoles, getAdminRoles } from "./config.js";
 
 const PREFIX = "$";
+
+// ── Singleton guard ───────────────────────────────────────────────────────────
+// Keeps a single Discord client alive per process. If startBot() is somehow
+// called twice (e.g. module re-evaluation), we skip the second call entirely.
+let activeClient: Client | null = null;
+
+// Deduplicates messages within a single process (belt-and-suspenders guard).
 const processedMessages = new Set<string>();
 
 async function registerSlashCommands(token: string, clientId: string): Promise<void> {
@@ -78,6 +85,12 @@ export function startBot(): void {
 
   if (!token) {
     logger.info("Discord bot is disabled — set DISCORD_BOT_TOKEN to enable");
+    return;
+  }
+
+  // Block double-start within the same process
+  if (activeClient !== null) {
+    logger.warn("startBot() called again — ignoring, client already running");
     return;
   }
 
@@ -284,6 +297,19 @@ export function startBot(): void {
       logger.error({ err }, "Error handling interaction");
     }
   });
+
+  // Register singleton and destroy it cleanly on process exit so the old
+  // WebSocket is torn down before a new process starts a fresh client.
+  activeClient = client;
+
+  function shutdown() {
+    if (activeClient) {
+      activeClient.destroy();
+      activeClient = null;
+    }
+  }
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 
   client.login(token).catch((err) => {
     logger.error({ err }, "Failed to login to Discord");
