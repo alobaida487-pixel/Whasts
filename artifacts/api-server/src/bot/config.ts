@@ -7,6 +7,7 @@ const DATA_FILE = path.join(__dirname, "../../data.json");
 
 interface BotData {
   staffRoles: Record<string, string[]>;
+  adminRoles: Record<string, string[]>;
   giveaways: Record<string, GiveawayData>;
   tickets: Record<string, TicketData>;
 }
@@ -38,7 +39,7 @@ function loadData(): BotData {
       return JSON.parse(raw) as BotData;
     }
   } catch {}
-  return { staffRoles: {}, giveaways: {}, tickets: {} };
+  return { staffRoles: {}, adminRoles: {}, giveaways: {}, tickets: {} };
 }
 
 function saveData(data: BotData): void {
@@ -55,6 +56,18 @@ export function getStaffRoles(guildId: string): string[] {
 export function setStaffRoles(guildId: string, roleIds: string[]): void {
   const data = loadData();
   data.staffRoles[guildId] = roleIds;
+  saveData(data);
+}
+
+export function getAdminRoles(guildId: string): string[] {
+  const data = loadData();
+  return (data.adminRoles ?? {})[guildId] ?? [];
+}
+
+export function setAdminRoles(guildId: string, roleIds: string[]): void {
+  const data = loadData();
+  if (!data.adminRoles) data.adminRoles = {};
+  data.adminRoles[guildId] = roleIds;
   saveData(data);
 }
 
