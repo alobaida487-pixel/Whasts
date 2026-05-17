@@ -11,7 +11,6 @@ import {
   ChannelType,
   PermissionsBitField,
   type TextChannel,
-  type Guild,
   type GuildMember,
   type ModalSubmitInteraction,
   ModalBuilder,
@@ -24,9 +23,6 @@ import {
   getTicket,
   deleteTicket,
 } from "../config.js";
-
-const TICKET_IMAGE =
-  "https://i.imgur.com/OdMdKOV.png";
 
 const REASONS: Record<
   string,
@@ -66,9 +62,7 @@ export async function sendTicketPanel(message: Message): Promise<void> {
       )
     );
 
-  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-    selectMenu
-  );
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
 
   const embed = new EmbedBuilder()
     .setColor(0x1a1a2e)
@@ -83,7 +77,6 @@ export async function sendTicketPanel(message: Message): Promise<void> {
         "لسنا مسؤولين إذا لم تقرأ القوانين ⚠️",
       ].join("\n")
     )
-    .setThumbnail("attachment://northern.png")
     .setFooter({ text: "Northern Kingdom • Ticket System" })
     .setTimestamp();
 
@@ -107,11 +100,8 @@ export async function handleTicketSelectReason(
   const user = interaction.user;
   const reasonData = REASONS[reason]!;
 
-  const existing = guild.channels.cache.find(
-    (ch) =>
-      ch.name === `${user.id}-ticket` ||
-      ch.name.startsWith(`ticket-${user.username.toLowerCase()}`)
-  );
+  const cleanName = `${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}-ticket`;
+  const existing = guild.channels.cache.find((ch) => ch.name === cleanName);
   if (existing) {
     await interaction.reply({
       content: `❌ عندك تذكرة مفتوحة بالفعل: ${existing.toString()}`,
@@ -147,7 +137,7 @@ export async function handleTicketSelectReason(
     })),
   ];
 
-  let ticketCategory = guild.channels.cache.find(
+  const ticketCategory = guild.channels.cache.find(
     (ch) =>
       ch.type === ChannelType.GuildCategory &&
       (ch.name.toLowerCase().includes("ticket") ||
@@ -156,7 +146,7 @@ export async function handleTicketSelectReason(
   );
 
   const channel = await guild.channels.create({
-    name: `${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}-ticket`,
+    name: cleanName,
     type: ChannelType.GuildText,
     parent: ticketCategory?.id,
     permissionOverwrites,
@@ -186,13 +176,10 @@ export async function handleTicketSelectReason(
         "اهلاً بك في تذكرة الدعم الخاصة بـ **Northern Kingdom**",
         "الرجاء شرح طلبك او مشكلتك وسيقوم فريق الدعم بالرد عليك قريباً",
         "",
-        `${staffMentions ? `<@❖•TicketHelper> ;` : ""}`,
-        "",
         "لسنا مسؤولين إذا لم تقرأ القوانين ⚠️",
         `السبب: **${reasonData.label}**`,
       ].join("\n")
     )
-    .setImage(TICKET_IMAGE)
     .setFooter({ text: "Ticket Support . | Northern Kingdom" })
     .setTimestamp();
 
@@ -259,7 +246,7 @@ export async function handleTicketButton(
 
   if (customId === "ticket_claim") {
     if (!isStaff) {
-      await interaction.reply({ content: "❌ فقط الإدارة تقدر تكلم.", ephemeral: true });
+      await interaction.reply({ content: "❌ فقط الإدارة تقدر تستلم.", ephemeral: true });
       return;
     }
     if (ticketData) {
@@ -277,9 +264,7 @@ export async function handleTicketButton(
       await interaction.reply({ content: "❌ ما عندك صلاحية.", ephemeral: true });
       return;
     }
-    await interaction.reply({
-      content: "🔒 سيتم إغلاق التذكرة خلال 5 ثواني...",
-    });
+    await interaction.reply({ content: "🔒 سيتم إغلاق التذكرة خلال 5 ثواني..." });
     setTimeout(async () => {
       try {
         deleteTicket(channel.id);
@@ -294,7 +279,6 @@ export async function handleTicketButton(
       await interaction.reply({ content: "❌ فقط الإدارة تقدر تحذف.", ephemeral: true });
       return;
     }
-
     const modal = new ModalBuilder()
       .setCustomId("ticket_delete_modal")
       .setTitle("سبب الحذف")
@@ -308,7 +292,6 @@ export async function handleTicketButton(
             .setPlaceholder("السبب...")
         )
       );
-
     await interaction.showModal(modal);
     return;
   }
@@ -331,9 +314,7 @@ export async function handleDeleteModal(
     try {
       const owner = await interaction.client.users.fetch(ticketData.ownerId);
       await owner
-        .send(
-          `تم حذف تذكرتك في **Northern Kingdom**\n**السبب:** ${reason}`
-        )
+        .send(`تم حذف تذكرتك في **Northern Kingdom**\n**السبب:** ${reason}`)
         .catch(() => {});
     } catch {}
   }

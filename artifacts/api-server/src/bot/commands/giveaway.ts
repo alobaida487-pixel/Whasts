@@ -1,16 +1,13 @@
 import {
   type Message,
   EmbedBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   type Client,
   type TextChannel,
 } from "discord.js";
 import { saveGiveaway, getGiveaway, getAllGiveaways } from "../config.js";
 
-const GIVEAWAY_EMOJI = "<a:kg_give:1501875249472344105>";
 const MOON = "🌙";
+const JOIN_EMOJI = "🌙";
 
 function parseDuration(str: string): number | null {
   const match = str.match(/^(\d+)(s|m|h|d)$/i);
@@ -55,7 +52,7 @@ function buildGiveawayEmbed(
 ): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(0x1a1a2e)
-    .setTitle(`${GIVEAWAY_EMOJI} GIVEAWAY ${GIVEAWAY_EMOJI}`)
+    .setTitle(`${MOON} GIVEAWAY ${MOON}`)
     .setDescription(
       [
         `${MOON} Prize: **${prize}**`,
@@ -65,15 +62,6 @@ function buildGiveawayEmbed(
       ].join("\n")
     )
     .setTimestamp(endsAt);
-}
-
-function buildGiveawayRow(): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("giveaway_join")
-      .setLabel("🎉 312")
-      .setStyle(ButtonStyle.Secondary)
-  );
 }
 
 export async function handleGstart(
@@ -107,18 +95,10 @@ export async function handleGstart(
   }
 
   const endsAt = Date.now() + duration;
-  const embed = buildGiveawayEmbed(
-    prize,
-    endsAt,
-    message.author.id,
-    winnersCount
-  );
-  const row = buildGiveawayRow();
+  const embed = buildGiveawayEmbed(prize, endsAt, message.author.id, winnersCount);
 
-  const gMsg = await (message.channel as TextChannel).send({
-    embeds: [embed],
-    components: [row],
-  });
+  const gMsg = await (message.channel as TextChannel).send({ embeds: [embed] });
+  await gMsg.react(JOIN_EMOJI).catch(() => {});
 
   saveGiveaway(gMsg.id, {
     channelId: message.channel.id,
@@ -147,29 +127,39 @@ export function scheduleGiveawayEnd(
   }, cappedDelay);
 }
 
-async function endGiveaway(messageId: string, client: Client): Promise<void> {
+export async function endGiveaway(messageId: string, client: Client): Promise<void> {
   const data = getGiveaway(messageId);
   if (!data || data.ended) return;
 
   try {
-    const channel = await client.channels.fetch(data.channelId) as TextChannel | null;
+    const channel = (await client.channels.fetch(data.channelId)) as TextChannel | null;
     if (!channel) return;
 
     const gMsg = await channel.messages.fetch(messageId);
-    const participants = data.participants;
+
+    const reaction = gMsg.reactions.cache.get(JOIN_EMOJI);
+    let participants: string[] = data.participants;
+
+    if (reaction) {
+      const users = await reaction.users.fetch();
+      participants = users
+        .filter((u) => !u.bot)
+        .map((u) => u.id);
+      data.participants = participants;
+    }
 
     let resultText = "";
     if (participants.length === 0) {
-      resultText = "لا يوجد مشاركون في القيفاوي! 😢";
+      resultText = `${MOON} لا يوجد مشاركون في القيفاوي!`;
     } else {
       const shuffled = [...participants].sort(() => Math.random() - 0.5);
       const winnerIds = shuffled.slice(0, Math.min(data.winners, shuffled.length));
-      resultText = `🎉 الفائزون: ${winnerIds.map((id) => `<@${id}>`).join(", ")}`;
+      resultText = `${MOON} الفائزون: ${winnerIds.map((id) => `<@${id}>`).join(", ")}`;
     }
 
     const endEmbed = new EmbedBuilder()
-      .setColor(0xff6600)
-      .setTitle("🎊 انتهى القيفاوي!")
+      .setColor(0x2c2f33)
+      .setTitle(`${MOON} انتهى القيفاوي`)
       .setDescription(
         [
           `${MOON} الجائزة: **${data.prize}**`,
@@ -180,9 +170,9 @@ async function endGiveaway(messageId: string, client: Client): Promise<void> {
       )
       .setTimestamp();
 
-    await gMsg.edit({ embeds: [endEmbed], components: [] });
+    await gMsg.edit({ embeds: [endEmbed] });
     await channel.send({
-      content: `🎉 انتهى القيفاوي على **${data.prize}**!\n${resultText}`,
+      content: `${MOON} انتهى القيفاوي على **${data.prize}**!\n${resultText}`,
     });
 
     data.ended = true;
@@ -190,20 +180,23 @@ async function endGiveaway(messageId: string, client: Client): Promise<void> {
   } catch {}
 }
 
-export async function handleGiveawayJoin(
+export async function handleGiveawayReaction(
   messageId: string,
-  userId: string
-): Promise<{ joined: boolean; count: number }> {
+  userId: string,
+  added: boolean
+): Promise<void> {
   const data = getGiveaway(messageId);
-  if (!data || data.ended) return { joined: false, count: 0 };
+  if (!data || data.ended) return;
 
-  if (data.participants.includes(userId)) {
-    return { joined: false, count: data.participants.length };
+  if (added) {
+    if (!data.participants.includes(userId)) {
+      data.participants.push(userId);
+      saveGiveaway(messageId, data);
+    }
+  } else {
+    data.participants = data.participants.filter((id) => id !== userId);
+    saveGiveaway(messageId, data);
   }
-
-  data.participants.push(userId);
-  saveGiveaway(messageId, data);
-  return { joined: true, count: data.participants.length };
 }
 
 export function restoreGiveawayTimers(client: Client): void {
