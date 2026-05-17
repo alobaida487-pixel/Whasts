@@ -44,6 +44,7 @@ import {
   handleJail,
   handleFasal,
   handleJailSelect,
+  handleRelease,
   restoreJailTimers,
 } from "./commands/jail.js";
 import {
@@ -228,6 +229,8 @@ export function startBot(): void {
         case "dismiss":       await handleFasal(message); break;
         case "سجن":
         case "jail":          await handleJail(message); break;
+        case "فك":
+        case "release":       await handleRelease(message); break;
 
         // قيفاوي
         case "gstart":        await handleGstart(message, args); break;

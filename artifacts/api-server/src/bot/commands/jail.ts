@@ -274,6 +274,63 @@ export async function handleJailSelect(
     .catch(() => {});
 }
 
+// ── $فك — manual early release ────────────────────────────────────────────────
+export async function handleRelease(message: Message): Promise<void> {
+  if (!message.guild || !message.member) return;
+  if (!isAdmin(message.member as GuildMember)) {
+    await message.reply({ embeds: [errEmbed("فقط الأدمن يقدر يستخدم هذا الأمر.")] });
+    return;
+  }
+
+  const target = message.mentions.members?.first() as GuildMember | undefined;
+  if (!target) {
+    await message.reply({ embeds: [errEmbed("الاستخدام: `$فك @شخص`")] });
+    return;
+  }
+
+  const cfg = getJailConfig(message.guild.id);
+  const record = (await import("../config.js")).getJailRecord(message.guild.id, target.id);
+
+  // Remove jail role
+  if (cfg) {
+    const jailRole = message.guild.roles.cache.get(cfg.roleId);
+    if (jailRole && target.roles.cache.has(jailRole.id)) {
+      await target.roles.remove(jailRole).catch(() => {});
+    }
+  }
+
+  // Remove Discord timeout
+  await target.timeout(null).catch(() => {});
+
+  // Restore original roles (if we have a record), otherwise just remove jail role
+  if (record && record.originalRoles.length > 0) {
+    const toRestore = record.originalRoles.filter((id) => message.guild!.roles.cache.has(id));
+    if (toRestore.length > 0) {
+      await target.roles.add(toRestore).catch(() => {});
+    }
+    deleteJailRecord(message.guild.id, target.id);
+  }
+
+  // Notify
+  await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x00ff88)
+        .setTitle("🔓 تم الإفراج")
+        .setDescription(
+          `تم الإفراج عن **${target.user.tag}**\n` +
+          (record ? `تم استعادة **${record.originalRoles.length}** رتبة` : "تم شيل رتبة السجن")
+        )
+        .setTimestamp(),
+    ],
+  });
+
+  // DM the released user
+  await target.user
+    .send(`✅ تم الإفراج عنك في **${message.guild.name}** بقرار من الإدارة. مرحباً بعودتك! 🎉`)
+    .catch(() => {});
+}
+
 // ── Release a jailed user (restore roles) ─────────────────────────────────────
 export async function releaseJailed(
   client: Client,
