@@ -26,10 +26,9 @@ const PREFIX = "$";
 
 export function startBot(): void {
   const token = process.env["DISCORD_BOT_TOKEN"];
-  const enabled = process.env["DISCORD_ENABLED"];
 
-  if (!token || enabled !== "true") {
-    logger.info("Discord bot is disabled (set DISCORD_ENABLED=true and DISCORD_BOT_TOKEN to enable)");
+  if (!token) {
+    logger.info("Discord bot is disabled — set DISCORD_BOT_TOKEN to enable");
     return;
   }
 
