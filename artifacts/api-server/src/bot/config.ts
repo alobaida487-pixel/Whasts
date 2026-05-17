@@ -5,14 +5,6 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, "../../data.json");
 
-interface BotData {
-  staffRoles: Record<string, string[]>;
-  adminRoles: Record<string, string[]>;
-  applyRole: Record<string, string>;
-  giveaways: Record<string, GiveawayData>;
-  tickets: Record<string, TicketData>;
-}
-
 export interface GiveawayData {
   channelId: string;
   messageId: string;
@@ -33,6 +25,31 @@ export interface TicketData {
   claimedBy?: string;
 }
 
+export interface JailConfig {
+  roleId: string;
+  dayOptions: number[];
+  hourOptions: number[];
+}
+
+export interface JailRecord {
+  userId: string;
+  guildId: string;
+  originalRoles: string[];
+  jailRoleId: string;
+  endsAt: number | null;
+}
+
+interface BotData {
+  staffRoles: Record<string, string[]>;
+  adminRoles: Record<string, string[]>;
+  dismissRoles: Record<string, string[]>;
+  applyRole: Record<string, string>;
+  jailConfig: Record<string, JailConfig>;
+  jailedUsers: Record<string, JailRecord>;
+  giveaways: Record<string, GiveawayData>;
+  tickets: Record<string, TicketData>;
+}
+
 function loadData(): BotData {
   try {
     if (fs.existsSync(DATA_FILE)) {
@@ -40,7 +57,16 @@ function loadData(): BotData {
       return JSON.parse(raw) as BotData;
     }
   } catch {}
-  return { staffRoles: {}, adminRoles: {}, applyRole: {}, giveaways: {}, tickets: {} };
+  return {
+    staffRoles: {},
+    adminRoles: {},
+    dismissRoles: {},
+    applyRole: {},
+    jailConfig: {},
+    jailedUsers: {},
+    giveaways: {},
+    tickets: {},
+  };
 }
 
 function saveData(data: BotData): void {
@@ -49,22 +75,20 @@ function saveData(data: BotData): void {
   } catch {}
 }
 
+// ── Staff roles ───────────────────────────────────────────────────────────────
 export function getStaffRoles(guildId: string): string[] {
-  const data = loadData();
-  return data.staffRoles[guildId] ?? [];
+  return loadData().staffRoles[guildId] ?? [];
 }
-
 export function setStaffRoles(guildId: string, roleIds: string[]): void {
   const data = loadData();
   data.staffRoles[guildId] = roleIds;
   saveData(data);
 }
 
+// ── Admin roles ($اداره) ──────────────────────────────────────────────────────
 export function getAdminRoles(guildId: string): string[] {
-  const data = loadData();
-  return (data.adminRoles ?? {})[guildId] ?? [];
+  return (loadData().adminRoles ?? {})[guildId] ?? [];
 }
-
 export function setAdminRoles(guildId: string, roleIds: string[]): void {
   const data = loadData();
   if (!data.adminRoles) data.adminRoles = {};
@@ -72,11 +96,21 @@ export function setAdminRoles(guildId: string, roleIds: string[]): void {
   saveData(data);
 }
 
-export function getApplyRole(guildId: string): string | null {
+// ── Dismiss roles ($فصل) ──────────────────────────────────────────────────────
+export function getDismissRoles(guildId: string): string[] {
+  return (loadData().dismissRoles ?? {})[guildId] ?? [];
+}
+export function setDismissRoles(guildId: string, roleIds: string[]): void {
   const data = loadData();
-  return (data.applyRole ?? {})[guildId] ?? null;
+  if (!data.dismissRoles) data.dismissRoles = {};
+  data.dismissRoles[guildId] = roleIds;
+  saveData(data);
 }
 
+// ── Apply role (تقديم الإدارة) ─────────────────────────────────────────────
+export function getApplyRole(guildId: string): string | null {
+  return (loadData().applyRole ?? {})[guildId] ?? null;
+}
 export function setApplyRole(guildId: string, roleId: string): void {
   const data = loadData();
   if (!data.applyRole) data.applyRole = {};
@@ -84,32 +118,58 @@ export function setApplyRole(guildId: string, roleId: string): void {
   saveData(data);
 }
 
-export function getGiveaway(messageId: string): GiveawayData | null {
+// ── Jail config ($سجن) ────────────────────────────────────────────────────────
+export function getJailConfig(guildId: string): JailConfig | null {
+  return (loadData().jailConfig ?? {})[guildId] ?? null;
+}
+export function setJailConfig(guildId: string, cfg: JailConfig): void {
   const data = loadData();
-  return data.giveaways[messageId] ?? null;
+  if (!data.jailConfig) data.jailConfig = {};
+  data.jailConfig[guildId] = cfg;
+  saveData(data);
 }
 
+// ── Jailed users ──────────────────────────────────────────────────────────────
+export function getJailRecord(guildId: string, userId: string): JailRecord | null {
+  return (loadData().jailedUsers ?? {})[`${guildId}:${userId}`] ?? null;
+}
+export function saveJailRecord(record: JailRecord): void {
+  const data = loadData();
+  if (!data.jailedUsers) data.jailedUsers = {};
+  data.jailedUsers[`${record.guildId}:${record.userId}`] = record;
+  saveData(data);
+}
+export function deleteJailRecord(guildId: string, userId: string): void {
+  const data = loadData();
+  delete data.jailedUsers[`${guildId}:${userId}`];
+  saveData(data);
+}
+export function getAllJailRecords(): JailRecord[] {
+  return Object.values(loadData().jailedUsers ?? {});
+}
+
+// ── Giveaways ─────────────────────────────────────────────────────────────────
+export function getGiveaway(messageId: string): GiveawayData | null {
+  return loadData().giveaways[messageId] ?? null;
+}
 export function saveGiveaway(messageId: string, giveaway: GiveawayData): void {
   const data = loadData();
   data.giveaways[messageId] = giveaway;
   saveData(data);
 }
-
 export function getAllGiveaways(): Record<string, GiveawayData> {
   return loadData().giveaways;
 }
 
+// ── Tickets ───────────────────────────────────────────────────────────────────
 export function getTicket(channelId: string): TicketData | null {
-  const data = loadData();
-  return data.tickets[channelId] ?? null;
+  return loadData().tickets[channelId] ?? null;
 }
-
 export function saveTicket(channelId: string, ticket: TicketData): void {
   const data = loadData();
   data.tickets[channelId] = ticket;
   saveData(data);
 }
-
 export function deleteTicket(channelId: string): void {
   const data = loadData();
   delete data.tickets[channelId];
