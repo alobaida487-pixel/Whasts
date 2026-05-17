@@ -58,7 +58,6 @@ const REASONS: Record<
   },
 };
 
-// ── Shared staff action buttons ───────────────────────────────────────────────
 function buildActionRow(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -80,6 +79,7 @@ function buildActionRow(): ActionRowBuilder<ButtonBuilder> {
   );
 }
 
+// ── Ticket panel ──────────────────────────────────────────────────────────────
 export async function sendTicketPanel(message: Message): Promise<void> {
   if (!message.guild) return;
 
@@ -122,52 +122,278 @@ export async function sendTicketPanel(message: Message): Promise<void> {
   await message.delete().catch(() => {});
 }
 
-// ── Admin Apply ticket ────────────────────────────────────────────────────────
-async function handleAdminApplyTicket(
-  interaction: StringSelectMenuInteraction,
-  channel: TextChannel,
-  userId: string
+// ── Dropdown select handler ───────────────────────────────────────────────────
+export async function handleTicketSelectReason(
+  interaction: StringSelectMenuInteraction
 ): Promise<void> {
-  const guild = interaction.guild!;
-  const applyRoleId = getApplyRole(guild.id);
+  if (!interaction.guild) return;
 
-  // Build the ping content
+  const reason = interaction.values[0];
+  if (!reason || !REASONS[reason]) return;
+
+  // Admin apply → show modal with questions first
+  if (reason === "admin_apply") {
+    const guild = interaction.guild;
+    const user = interaction.user;
+    const cleanName = `apply-${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+    const existing = guild.channels.cache.find((ch) => ch.name === cleanName);
+    if (existing) {
+      await interaction.reply({
+        content: `❌ عندك تقديم مفتوح بالفعل: ${existing.toString()}`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId("admin_apply_modal")
+      .setTitle("📋 تقديم الإدارة — Northern Kingdom")
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("apply_name_age")
+            .setLabel("الاسم والعمر")
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder("مثال: محمد — 20 سنة")
+            .setRequired(true)
+            .setMaxLength(60)
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("apply_reason")
+            .setLabel("سبب التقديم")
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder("لماذا تريد الانضمام لفريق الإدارة؟")
+            .setRequired(true)
+            .setMaxLength(400)
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("apply_experience")
+            .setLabel("خبراتك في الإدارة")
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder("هل سبق أن عملت إداري؟ ما هي خبرتك؟")
+            .setRequired(true)
+            .setMaxLength(400)
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("apply_activity")
+            .setLabel("مدة تفاعلك في السيرفر")
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder("مثال: 3 أشهر — يومياً")
+            .setRequired(true)
+            .setMaxLength(100)
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("apply_benefit")
+            .setLabel("وش بتفيدنا؟")
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder("ما الذي ستضيفه لفريق Northern Kingdom؟")
+            .setRequired(true)
+            .setMaxLength(400)
+        )
+      );
+
+    await interaction.showModal(modal);
+    return;
+  }
+
+  // Regular ticket (support / complaints / rewards)
+  const guild = interaction.guild;
+  const user = interaction.user;
+  const reasonData = REASONS[reason]!;
+
+  const cleanName = `ticket-${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+  const existing = guild.channels.cache.find((ch) => ch.name === cleanName);
+  if (existing) {
+    await interaction.reply({
+      content: `❌ عندك تذكرة مفتوحة بالفعل: ${existing.toString()}`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const staffRoleIds = getStaffRoles(guild.id);
+  const channel = await guild.channels.create({
+    name: cleanName,
+    type: ChannelType.GuildText,
+    parent: guild.channels.cache.find(
+      (ch) =>
+        ch.type === ChannelType.GuildCategory &&
+        (ch.name.toLowerCase().includes("ticket") ||
+          ch.name.includes("تذكرة") ||
+          ch.name.includes("التذاكر"))
+    )?.id,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+      {
+        id: user.id,
+        allow: [
+          PermissionsBitField.Flags.ViewChannel,
+          PermissionsBitField.Flags.SendMessages,
+          PermissionsBitField.Flags.ReadMessageHistory,
+        ],
+      },
+      ...staffRoleIds.map((roleId) => ({
+        id: roleId,
+        allow: [
+          PermissionsBitField.Flags.ViewChannel,
+          PermissionsBitField.Flags.SendMessages,
+          PermissionsBitField.Flags.ReadMessageHistory,
+          PermissionsBitField.Flags.ManageChannels,
+        ],
+      })),
+    ],
+    topic: `تذكرة — ${user.tag} | ${reasonData.label}`,
+  });
+
+  saveTicket(channel.id, {
+    channelId: channel.id,
+    ownerId: user.id,
+    guildId: guild.id,
+    reason: reasonData.label,
+  });
+
+  const staffMentions = staffRoleIds.map((id) => `<@&${id}>`).join(" ");
+
+  const ticketEmbed = new EmbedBuilder()
+    .setColor(0x1a1a2e)
+    .setDescription(
+      [
+        "السلام عليكم ورحمة الله وبركاته",
+        "",
+        `🌟 اهلاً بك **<@${user.id}>**`,
+        "",
+        "اهلاً بك في تذكرة الدعم الخاصة بـ **Northern Kingdom**",
+        "الرجاء شرح طلبك أو مشكلتك وسيقوم فريق الدعم بالرد عليك قريباً",
+        "",
+        "لسنا مسؤولين إذا لم تقرأ القوانين ⚠️",
+        `السبب: **${reasonData.label}**`,
+      ].join("\n")
+    )
+    .setFooter({ text: "Ticket Support | Northern Kingdom" })
+    .setTimestamp();
+
+  await (channel as TextChannel).send({
+    content: `<@${user.id}>${staffMentions ? ` ${staffMentions}` : ""}`,
+    embeds: [ticketEmbed],
+    components: [buildActionRow()],
+  });
+
+  await interaction.editReply({ content: `✅ تم فتح تذكرتك: ${channel.toString()}` });
+}
+
+// ── Admin Apply modal submit ───────────────────────────────────────────────────
+export async function handleAdminApplyModal(
+  interaction: ModalSubmitInteraction
+): Promise<void> {
+  if (!interaction.guild) return;
+
+  const guild = interaction.guild;
+  const user = interaction.user;
+
+  const nameAge = interaction.fields.getTextInputValue("apply_name_age");
+  const reason = interaction.fields.getTextInputValue("apply_reason");
+  const experience = interaction.fields.getTextInputValue("apply_experience");
+  const activity = interaction.fields.getTextInputValue("apply_activity");
+  const benefit = interaction.fields.getTextInputValue("apply_benefit");
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const applyRoleId = getApplyRole(guild.id);
+  const staffRoleIds = getStaffRoles(guild.id);
+  const cleanName = `apply-${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+
+  // Permissions: user + staff + apply role
+  const reviewRoles = [
+    ...staffRoleIds,
+    ...(applyRoleId ? [applyRoleId] : []),
+  ].filter((v, i, a) => a.indexOf(v) === i);
+
+  const permissionOverwrites = [
+    { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+    {
+      id: user.id,
+      allow: [
+        PermissionsBitField.Flags.ViewChannel,
+        PermissionsBitField.Flags.SendMessages,
+        PermissionsBitField.Flags.ReadMessageHistory,
+        PermissionsBitField.Flags.AttachFiles,
+      ],
+    },
+    ...reviewRoles.map((roleId) => ({
+      id: roleId,
+      allow: [
+        PermissionsBitField.Flags.ViewChannel,
+        PermissionsBitField.Flags.SendMessages,
+        PermissionsBitField.Flags.ReadMessageHistory,
+        PermissionsBitField.Flags.ManageChannels,
+      ],
+    })),
+  ];
+
+  // Find apply/staff category or fall back to ticket category
+  const ticketCategory =
+    guild.channels.cache.find(
+      (ch) =>
+        ch.type === ChannelType.GuildCategory &&
+        (ch.name.toLowerCase().includes("apply") ||
+          ch.name.includes("تقديم") ||
+          ch.name.toLowerCase().includes("staff"))
+    ) ??
+    guild.channels.cache.find(
+      (ch) =>
+        ch.type === ChannelType.GuildCategory &&
+        (ch.name.toLowerCase().includes("ticket") ||
+          ch.name.includes("تذكرة"))
+    );
+
+  const channel = await guild.channels.create({
+    name: cleanName,
+    type: ChannelType.GuildText,
+    parent: ticketCategory?.id,
+    permissionOverwrites,
+    topic: `تقديم إدارة — ${user.tag}`,
+  });
+
+  saveTicket(channel.id, {
+    channelId: channel.id,
+    ownerId: user.id,
+    guildId: guild.id,
+    reason: "تقديم الإدارة - Admin Apply",
+  });
+
+  // Build pings
   const pings = [
-    `<@${userId}>`,
+    `<@${user.id}>`,
     applyRoleId ? `<@&${applyRoleId}>` : "",
   ]
     .filter(Boolean)
     .join(" ");
 
-  // Styled embed for admin apply
+  // Apply answers embed
   const applyEmbed = new EmbedBuilder()
     .setColor(0x0d0d1a)
-    .setTitle("👑 تقديم الإدارة | Northern Kingdom")
-    .setDescription(
-      [
-        `مرحباً <@${userId}> 👋`,
-        "",
-        "**شكراً على اهتمامك بالانضمام لفريق إدارة Northern Kingdom**",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━━",
-        "📋 **متطلبات التقديم:**",
-        "> ✅ **رابط سيرفرك** — ضع رابط الدعوة الخاص بسيرفرك",
-        "> 🖼️ **شعار سيرفرك** — ارفع صورة الشعار هنا",
-        "> 📝 **نبذة عنك** — من أنت وما هي خبرتك في الإدارة؟",
-        "> ⭐ **لماذا تريد الانضمام؟** — اشرح سبب رغبتك",
-        "━━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "⚠️ **تأكد من إرفاق جميع المتطلبات قبل الإرسال**",
-        "سيتم مراجعة طلبك من قبل الإدارة العليا وسيتم الرد عليك قريباً",
-      ].join("\n")
-    )
-    .setThumbnail(
-      "https://cdn.discordapp.com/emojis/1017018743456432218.png"
+    .setAuthor({
+      name: `${user.username} — تقديم الإدارة`,
+      iconURL: user.displayAvatarURL(),
+    })
+    .setTitle("👑 طلب انضمام — Northern Kingdom")
+    .addFields(
+      { name: "👤 الاسم والعمر", value: nameAge, inline: false },
+      { name: "📋 سبب التقديم", value: reason, inline: false },
+      { name: "⭐ الخبرات في الإدارة", value: experience, inline: false },
+      { name: "📅 مدة التفاعل في السيرفر", value: activity, inline: false },
+      { name: "💡 وش بتفيدنا؟", value: benefit, inline: false }
     )
     .setFooter({ text: "Northern Kingdom • Staff Apply System" })
     .setTimestamp();
 
-  // Try to attach the NK image
+  // Try to attach NK image
   let imageAttachment: AttachmentBuilder | null = null;
   try {
     if (fs.existsSync(NK_IMAGE_PATH)) {
@@ -184,149 +410,16 @@ async function handleAdminApplyTicket(
     embeds: [applyEmbed],
     components: [buildActionRow()],
   };
-  if (imageAttachment) {
-    msgOptions.files = [imageAttachment];
-  }
+  if (imageAttachment) msgOptions.files = [imageAttachment];
 
-  await channel.send(msgOptions);
-}
-
-// ── Regular ticket (support / complaints / rewards) ───────────────────────────
-async function handleRegularTicket(
-  interaction: StringSelectMenuInteraction,
-  channel: TextChannel,
-  userId: string,
-  reasonData: { label: string; description: string; emoji: string }
-): Promise<void> {
-  const guild = interaction.guild!;
-  const staffRoleIds = getStaffRoles(guild.id);
-  const staffMentions = staffRoleIds.map((id) => `<@&${id}>`).join(" ");
-
-  const ticketEmbed = new EmbedBuilder()
-    .setColor(0x1a1a2e)
-    .setDescription(
-      [
-        "السلام عليكم ورحمة الله وبركاته",
-        "",
-        `🌟 اهلاً بك **<@${userId}>**`,
-        "",
-        "اهلاً بك في تذكرة الدعم الخاصة بـ **Northern Kingdom**",
-        "الرجاء شرح طلبك أو مشكلتك وسيقوم فريق الدعم بالرد عليك قريباً",
-        "",
-        "لسنا مسؤولين إذا لم تقرأ القوانين ⚠️",
-        `السبب: **${reasonData.label}**`,
-      ].join("\n")
-    )
-    .setFooter({ text: "Ticket Support | Northern Kingdom" })
-    .setTimestamp();
-
-  await channel.send({
-    content: `<@${userId}>${staffMentions ? ` ${staffMentions}` : ""}`,
-    embeds: [ticketEmbed],
-    components: [buildActionRow()],
-  });
-}
-
-// ── Main handler ──────────────────────────────────────────────────────────────
-export async function handleTicketSelectReason(
-  interaction: StringSelectMenuInteraction
-): Promise<void> {
-  if (!interaction.guild) return;
-
-  const reason = interaction.values[0];
-  if (!reason || !REASONS[reason]) return;
-
-  const guild = interaction.guild;
-  const user = interaction.user;
-  const reasonData = REASONS[reason]!;
-  const isAdminApply = reason === "admin_apply";
-
-  // Prevent duplicate tickets
-  const prefix = isAdminApply ? "apply" : "ticket";
-  const cleanName = `${prefix}-${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
-  const existing = guild.channels.cache.find((ch) => ch.name === cleanName);
-  if (existing) {
-    await interaction.reply({
-      content: `❌ عندك تذكرة مفتوحة بالفعل: ${existing.toString()}`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  await interaction.deferReply({ ephemeral: true });
-
-  const staffRoleIds = getStaffRoles(guild.id);
-  const applyRoleId = getApplyRole(guild.id);
-
-  // Build permissions — staff + (apply role for admin_apply)
-  const extraRoles = isAdminApply && applyRoleId
-    ? [...staffRoleIds, applyRoleId].filter((v, i, a) => a.indexOf(v) === i)
-    : staffRoleIds;
-
-  const permissionOverwrites = [
-    { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-    {
-      id: user.id,
-      allow: [
-        PermissionsBitField.Flags.ViewChannel,
-        PermissionsBitField.Flags.SendMessages,
-        PermissionsBitField.Flags.ReadMessageHistory,
-        PermissionsBitField.Flags.AttachFiles,
-      ],
-    },
-    ...extraRoles.map((roleId) => ({
-      id: roleId,
-      allow: [
-        PermissionsBitField.Flags.ViewChannel,
-        PermissionsBitField.Flags.SendMessages,
-        PermissionsBitField.Flags.ReadMessageHistory,
-        PermissionsBitField.Flags.ManageChannels,
-      ],
-    })),
-  ];
-
-  // Find suitable category
-  const categoryKeywords = isAdminApply
-    ? ["apply", "تقديم", "staff"]
-    : ["ticket", "تذكرة", "التذاكر"];
-
-  const ticketCategory = guild.channels.cache.find(
-    (ch) =>
-      ch.type === ChannelType.GuildCategory &&
-      categoryKeywords.some((kw) => ch.name.toLowerCase().includes(kw))
-  ) ?? guild.channels.cache.find(
-    (ch) =>
-      ch.type === ChannelType.GuildCategory &&
-      (ch.name.toLowerCase().includes("ticket") || ch.name.includes("تذكرة"))
-  );
-
-  const channel = await guild.channels.create({
-    name: cleanName,
-    type: ChannelType.GuildText,
-    parent: ticketCategory?.id,
-    permissionOverwrites,
-    topic: `${isAdminApply ? "تقديم إدارة" : "تذكرة"} — ${user.tag} | ${reasonData.label}`,
-  });
-
-  saveTicket(channel.id, {
-    channelId: channel.id,
-    ownerId: user.id,
-    guildId: guild.id,
-    reason: reasonData.label,
-  });
-
-  if (isAdminApply) {
-    await handleAdminApplyTicket(interaction, channel as TextChannel, user.id);
-  } else {
-    await handleRegularTicket(interaction, channel as TextChannel, user.id, reasonData);
-  }
+  await (channel as TextChannel).send(msgOptions);
 
   await interaction.editReply({
-    content: `✅ تم فتح تذكرتك: ${channel.toString()}`,
+    content: `✅ تم إرسال تقديمك بنجاح: ${channel.toString()}\nستتم مراجعته من قبل الإدارة قريباً 🕐`,
   });
 }
 
-// ── Button handler ────────────────────────────────────────────────────────────
+// ── Ticket buttons ────────────────────────────────────────────────────────────
 export async function handleTicketButton(
   interaction: ButtonInteraction
 ): Promise<void> {
@@ -411,7 +504,7 @@ export async function handleTicketButton(
   }
 }
 
-// ── Modal handler ─────────────────────────────────────────────────────────────
+// ── Delete modal ──────────────────────────────────────────────────────────────
 export async function handleDeleteModal(
   interaction: ModalSubmitInteraction
 ): Promise<void> {

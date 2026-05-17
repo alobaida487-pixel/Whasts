@@ -45,6 +45,7 @@ import {
   handleTicketSelectReason,
   handleTicketButton,
   handleDeleteModal,
+  handleAdminApplyModal,
 } from "./tickets/index.js";
 import { setAdminRoles, getAdminRoles, setApplyRole, getApplyRole } from "./config.js";
 
@@ -319,6 +320,11 @@ export function startBot(): void {
         const modal = interaction as ModalSubmitInteraction;
         if (modal.customId === "ticket_delete_modal") {
           await handleDeleteModal(modal);
+          return;
+        }
+        if (modal.customId === "admin_apply_modal") {
+          await handleAdminApplyModal(modal);
+          return;
         }
       }
     } catch (err) {
