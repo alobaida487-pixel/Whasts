@@ -1,3 +1,6 @@
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import {
   type Message,
   type ButtonInteraction,
@@ -16,13 +19,18 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  AttachmentBuilder,
 } from "discord.js";
 import {
   getStaffRoles,
   saveTicket,
   getTicket,
   deleteTicket,
+  getApplyRole,
 } from "../config.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const NK_IMAGE_PATH = path.join(__dirname, "../../../assets/nk-apply.jpeg");
 
 const REASONS: Record<
   string,
@@ -30,21 +38,47 @@ const REASONS: Record<
 > = {
   support: {
     label: "دعم فني - Support",
-    description: "للمساعدة بشكل عام / للاستفسارات :",
+    description: "للمساعدة بشكل عام / للاستفسارات",
     emoji: "🛠️",
   },
   staff_complaints: {
     label: "شكاوي على الإدارة - Staff Complaints",
-    description: "إذا كانت هناك شكوى على إداري مع دلائك :",
+    description: "إذا كانت هناك شكوى على إداري مع دلائك",
     emoji: "⚖️",
   },
   rewards: {
     label: "الجوائز - Rewards",
-    description:
-      "لاستلام جوائز عجلة الحظ / نظام الإنقاش / مسابقة الصور / إلخ :",
+    description: "لاستلام جوائز عجلة الحظ / نظام الإنقاش / إلخ",
     emoji: "🎁",
   },
+  admin_apply: {
+    label: "تقديم الإدارة - Admin Apply",
+    description: "تقديم طلب للانضمام لفريق الإدارة",
+    emoji: "👑",
+  },
 };
+
+// ── Shared staff action buttons ───────────────────────────────────────────────
+function buildActionRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ticket_add_user")
+      .setLabel("Add User")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("ticket_claim")
+      .setLabel("Claim")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("ticket_close")
+      .setLabel("Close")
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId("ticket_delete_reason")
+      .setLabel("Delete With Reason")
+      .setStyle(ButtonStyle.Danger)
+  );
+}
 
 export async function sendTicketPanel(message: Message): Promise<void> {
   if (!message.guild) return;
@@ -72,7 +106,7 @@ export async function sendTicketPanel(message: Message): Promise<void> {
         "السلام عليكم ورحمة الله وبركاته",
         "",
         "🌟 اهلا بك في نظام التذاكر الخاص بـ **Northern Kingdom**",
-        "الرجاء شرح طلبك او مشكلتك وسيقوم فريق الدعم بالرد عليك قريباً",
+        "الرجاء اختيار نوع طلبك وسيقوم فريق الدعم بالرد عليك قريباً",
         "",
         "لسنا مسؤولين إذا لم تقرأ القوانين ⚠️",
       ].join("\n")
@@ -88,6 +122,112 @@ export async function sendTicketPanel(message: Message): Promise<void> {
   await message.delete().catch(() => {});
 }
 
+// ── Admin Apply ticket ────────────────────────────────────────────────────────
+async function handleAdminApplyTicket(
+  interaction: StringSelectMenuInteraction,
+  channel: TextChannel,
+  userId: string
+): Promise<void> {
+  const guild = interaction.guild!;
+  const applyRoleId = getApplyRole(guild.id);
+
+  // Build the ping content
+  const pings = [
+    `<@${userId}>`,
+    applyRoleId ? `<@&${applyRoleId}>` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  // Styled embed for admin apply
+  const applyEmbed = new EmbedBuilder()
+    .setColor(0x0d0d1a)
+    .setTitle("👑 تقديم الإدارة | Northern Kingdom")
+    .setDescription(
+      [
+        `مرحباً <@${userId}> 👋`,
+        "",
+        "**شكراً على اهتمامك بالانضمام لفريق إدارة Northern Kingdom**",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━",
+        "📋 **متطلبات التقديم:**",
+        "> ✅ **رابط سيرفرك** — ضع رابط الدعوة الخاص بسيرفرك",
+        "> 🖼️ **شعار سيرفرك** — ارفع صورة الشعار هنا",
+        "> 📝 **نبذة عنك** — من أنت وما هي خبرتك في الإدارة؟",
+        "> ⭐ **لماذا تريد الانضمام؟** — اشرح سبب رغبتك",
+        "━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "⚠️ **تأكد من إرفاق جميع المتطلبات قبل الإرسال**",
+        "سيتم مراجعة طلبك من قبل الإدارة العليا وسيتم الرد عليك قريباً",
+      ].join("\n")
+    )
+    .setThumbnail(
+      "https://cdn.discordapp.com/emojis/1017018743456432218.png"
+    )
+    .setFooter({ text: "Northern Kingdom • Staff Apply System" })
+    .setTimestamp();
+
+  // Try to attach the NK image
+  let imageAttachment: AttachmentBuilder | null = null;
+  try {
+    if (fs.existsSync(NK_IMAGE_PATH)) {
+      imageAttachment = new AttachmentBuilder(NK_IMAGE_PATH, {
+        name: "nk-apply.jpeg",
+        description: "Northern Kingdom — تقديم الإدارة",
+      });
+      applyEmbed.setImage("attachment://nk-apply.jpeg");
+    }
+  } catch {}
+
+  const msgOptions: Parameters<TextChannel["send"]>[0] = {
+    content: pings,
+    embeds: [applyEmbed],
+    components: [buildActionRow()],
+  };
+  if (imageAttachment) {
+    msgOptions.files = [imageAttachment];
+  }
+
+  await channel.send(msgOptions);
+}
+
+// ── Regular ticket (support / complaints / rewards) ───────────────────────────
+async function handleRegularTicket(
+  interaction: StringSelectMenuInteraction,
+  channel: TextChannel,
+  userId: string,
+  reasonData: { label: string; description: string; emoji: string }
+): Promise<void> {
+  const guild = interaction.guild!;
+  const staffRoleIds = getStaffRoles(guild.id);
+  const staffMentions = staffRoleIds.map((id) => `<@&${id}>`).join(" ");
+
+  const ticketEmbed = new EmbedBuilder()
+    .setColor(0x1a1a2e)
+    .setDescription(
+      [
+        "السلام عليكم ورحمة الله وبركاته",
+        "",
+        `🌟 اهلاً بك **<@${userId}>**`,
+        "",
+        "اهلاً بك في تذكرة الدعم الخاصة بـ **Northern Kingdom**",
+        "الرجاء شرح طلبك أو مشكلتك وسيقوم فريق الدعم بالرد عليك قريباً",
+        "",
+        "لسنا مسؤولين إذا لم تقرأ القوانين ⚠️",
+        `السبب: **${reasonData.label}**`,
+      ].join("\n")
+    )
+    .setFooter({ text: "Ticket Support | Northern Kingdom" })
+    .setTimestamp();
+
+  await channel.send({
+    content: `<@${userId}>${staffMentions ? ` ${staffMentions}` : ""}`,
+    embeds: [ticketEmbed],
+    components: [buildActionRow()],
+  });
+}
+
+// ── Main handler ──────────────────────────────────────────────────────────────
 export async function handleTicketSelectReason(
   interaction: StringSelectMenuInteraction
 ): Promise<void> {
@@ -99,8 +239,11 @@ export async function handleTicketSelectReason(
   const guild = interaction.guild;
   const user = interaction.user;
   const reasonData = REASONS[reason]!;
+  const isAdminApply = reason === "admin_apply";
 
-  const cleanName = `${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}-ticket`;
+  // Prevent duplicate tickets
+  const prefix = isAdminApply ? "apply" : "ticket";
+  const cleanName = `${prefix}-${user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
   const existing = guild.channels.cache.find((ch) => ch.name === cleanName);
   if (existing) {
     await interaction.reply({
@@ -113,20 +256,25 @@ export async function handleTicketSelectReason(
   await interaction.deferReply({ ephemeral: true });
 
   const staffRoleIds = getStaffRoles(guild.id);
+  const applyRoleId = getApplyRole(guild.id);
+
+  // Build permissions — staff + (apply role for admin_apply)
+  const extraRoles = isAdminApply && applyRoleId
+    ? [...staffRoleIds, applyRoleId].filter((v, i, a) => a.indexOf(v) === i)
+    : staffRoleIds;
+
   const permissionOverwrites = [
-    {
-      id: guild.roles.everyone.id,
-      deny: [PermissionsBitField.Flags.ViewChannel],
-    },
+    { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
     {
       id: user.id,
       allow: [
         PermissionsBitField.Flags.ViewChannel,
         PermissionsBitField.Flags.SendMessages,
         PermissionsBitField.Flags.ReadMessageHistory,
+        PermissionsBitField.Flags.AttachFiles,
       ],
     },
-    ...staffRoleIds.map((roleId) => ({
+    ...extraRoles.map((roleId) => ({
       id: roleId,
       allow: [
         PermissionsBitField.Flags.ViewChannel,
@@ -137,12 +285,19 @@ export async function handleTicketSelectReason(
     })),
   ];
 
+  // Find suitable category
+  const categoryKeywords = isAdminApply
+    ? ["apply", "تقديم", "staff"]
+    : ["ticket", "تذكرة", "التذاكر"];
+
   const ticketCategory = guild.channels.cache.find(
     (ch) =>
       ch.type === ChannelType.GuildCategory &&
-      (ch.name.toLowerCase().includes("ticket") ||
-        ch.name.includes("تذكرة") ||
-        ch.name.includes("التذاكر"))
+      categoryKeywords.some((kw) => ch.name.toLowerCase().includes(kw))
+  ) ?? guild.channels.cache.find(
+    (ch) =>
+      ch.type === ChannelType.GuildCategory &&
+      (ch.name.toLowerCase().includes("ticket") || ch.name.includes("تذكرة"))
   );
 
   const channel = await guild.channels.create({
@@ -150,7 +305,7 @@ export async function handleTicketSelectReason(
     type: ChannelType.GuildText,
     parent: ticketCategory?.id,
     permissionOverwrites,
-    topic: `تذكرة ${user.tag} | السبب: ${reasonData.label}`,
+    topic: `${isAdminApply ? "تقديم إدارة" : "تذكرة"} — ${user.tag} | ${reasonData.label}`,
   });
 
   saveTicket(channel.id, {
@@ -160,59 +315,18 @@ export async function handleTicketSelectReason(
     reason: reasonData.label,
   });
 
-  const staffMentions =
-    staffRoleIds.length > 0
-      ? staffRoleIds.map((id) => `<@&${id}>`).join(" ")
-      : "";
-
-  const ticketEmbed = new EmbedBuilder()
-    .setColor(0x1a1a2e)
-    .setDescription(
-      [
-        "السلام عليكم ورحمة الله وبركاته",
-        "",
-        `🌟 اهلا بك **<@${user.id}>**`,
-        "",
-        "اهلاً بك في تذكرة الدعم الخاصة بـ **Northern Kingdom**",
-        "الرجاء شرح طلبك او مشكلتك وسيقوم فريق الدعم بالرد عليك قريباً",
-        "",
-        "لسنا مسؤولين إذا لم تقرأ القوانين ⚠️",
-        `السبب: **${reasonData.label}**`,
-      ].join("\n")
-    )
-    .setFooter({ text: "Ticket Support . | Northern Kingdom" })
-    .setTimestamp();
-
-  const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ticket_add_user")
-      .setLabel("Add User")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("ticket_claim")
-      .setLabel("Claim")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId("ticket_close")
-      .setLabel("Close")
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId("ticket_delete_reason")
-      .setLabel("Delete With Reason")
-      .setStyle(ButtonStyle.Danger)
-  );
-
-  await (channel as TextChannel).send({
-    content: `<@${user.id}> ${staffMentions}`,
-    embeds: [ticketEmbed],
-    components: [actionRow],
-  });
+  if (isAdminApply) {
+    await handleAdminApplyTicket(interaction, channel as TextChannel, user.id);
+  } else {
+    await handleRegularTicket(interaction, channel as TextChannel, user.id, reasonData);
+  }
 
   await interaction.editReply({
     content: `✅ تم فتح تذكرتك: ${channel.toString()}`,
   });
 }
 
+// ── Button handler ────────────────────────────────────────────────────────────
 export async function handleTicketButton(
   interaction: ButtonInteraction
 ): Promise<void> {
@@ -297,6 +411,7 @@ export async function handleTicketButton(
   }
 }
 
+// ── Modal handler ─────────────────────────────────────────────────────────────
 export async function handleDeleteModal(
   interaction: ModalSubmitInteraction
 ): Promise<void> {

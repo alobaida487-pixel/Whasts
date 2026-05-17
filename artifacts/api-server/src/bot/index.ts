@@ -46,7 +46,7 @@ import {
   handleTicketButton,
   handleDeleteModal,
 } from "./tickets/index.js";
-import { setAdminRoles, getAdminRoles } from "./config.js";
+import { setAdminRoles, getAdminRoles, setApplyRole, getApplyRole } from "./config.js";
 
 const PREFIX = "$";
 
@@ -68,6 +68,13 @@ async function registerSlashCommands(token: string, clientId: string): Promise<v
       .addRoleOption((o) => o.setName("role3").setDescription("الرتبة الثالثة").setRequired(false))
       .addRoleOption((o) => o.setName("role4").setDescription("الرتبة الرابعة").setRequired(false))
       .addRoleOption((o) => o.setName("role5").setDescription("الرتبة الخامسة").setRequired(false))
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName("setup-apply-role")
+      .setDescription("تحديد الرتبة التي تُنبَّه عند فتح تذكرة تقديم الإدارة")
+      .addRoleOption((o) =>
+        o.setName("role").setDescription("الرتبة المسؤولة عن مراجعة التقديمات").setRequired(true)
+      )
       .toJSON(),
   ];
 
@@ -232,35 +239,56 @@ export function startBot(): void {
   // ── Interactions ─────────────────────────────────────────────────────────
   client.on("interactionCreate", async (interaction: Interaction) => {
     try {
-      // Slash command: /setup-admin-roles
+      // Slash commands
       if (interaction.isChatInputCommand()) {
         const cmd = interaction as ChatInputCommandInteraction;
+        if (!cmd.guild) return;
+        const member = cmd.member as GuildMember;
+        if (!member.permissions.has("Administrator")) {
+          await cmd.reply({ content: "❌ فقط الأدمن يقدر يستخدم هذا الأمر.", ephemeral: true });
+          return;
+        }
+
+        // /setup-admin-roles
         if (cmd.commandName === "setup-admin-roles") {
-          if (!cmd.guild) return;
-          const member = cmd.member as GuildMember;
-          if (!member.permissions.has("Administrator")) {
-            await cmd.reply({ content: "❌ فقط الأدمن يقدر يستخدم هذا الأمر.", ephemeral: true });
-            return;
-          }
           const roleIds: string[] = [];
           for (let i = 1; i <= 5; i++) {
             const role = cmd.options.getRole(`role${i}`);
             if (role) roleIds.push(role.id);
           }
           setAdminRoles(cmd.guild.id, roleIds);
-          const current = getAdminRoles(cmd.guild.id);
-          const names = current.map((id) => `<@&${id}>`).join("\n");
+          const names = getAdminRoles(cmd.guild.id).map((id) => `<@&${id}>`).join("\n");
           await cmd.reply({
             embeds: [
               new EmbedBuilder()
                 .setColor(0x00ff88)
                 .setTitle("✅ تم تحديد رتب الإدارة")
-                .setDescription(`الرتب التي ستُعطى عند `+"`$اداره @شخص`"+`:\n${names}`)
+                .setDescription("الرتب التي ستُعطى عند `$اداره @شخص`:\n" + names)
                 .setFooter({ text: "Northern Kingdom" }),
             ],
-            ephemeral: false,
           });
+          return;
         }
+
+        // /setup-apply-role
+        if (cmd.commandName === "setup-apply-role") {
+          const role = cmd.options.getRole("role", true);
+          setApplyRole(cmd.guild.id, role.id);
+          const current = getApplyRole(cmd.guild.id);
+          await cmd.reply({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0x5865f2)
+                .setTitle("✅ تم تحديد رتبة مراجعة التقديمات")
+                .setDescription(
+                  `عند فتح تذكرة **تقديم الإدارة** سيتم منشنة:\n<@&${current}>`
+                )
+                .setFooter({ text: "Northern Kingdom • Staff Apply System" }),
+            ],
+          });
+          return;
+        }
+
         return;
       }
 
